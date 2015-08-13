@@ -72,7 +72,7 @@ class MLP(object):
 
     def get_output_from_layer(self, layer, layer_number):
         layer_ = layer
-        for i in np.arange(layer_number + 1, self.num_layers + 1):
+        for i in np.arange(layer_number + 1, self.num_layers):
             layer_ = self.get_layer_from_previous_layer(layer_, i)
         return layer_
 
@@ -87,139 +87,73 @@ class MLP(object):
         return (cost, updates)
 
 
-def test_dA(learning_rate=0.1, training_epochs=3,
-            dataset='mnist.pkl.gz',
-            batch_size=20, output_folder='plots'):
-    datasets = load_data(dataset)
-    train_set_x, train_set_y = datasets[0]
-
-    n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
-
+def build_model(layers=[784, 500, 784]):
+    # Basic settings
     index = T.lscalar()  # index to a [mini]batch
     x = T.matrix('x')
-
-    if not os.path.isdir(output_folder):
-        os.makedirs(output_folder)
-    os.chdir(output_folder)
-
-    ####################################
-    # BUILDING THE MODEL NO CORRUPTION #
-    ####################################
-
     rng = np.random.RandomState(123)
     theano_rng = RandomStreams(rng.randint(2 ** 30))
 
-    da = dA(np_rng=rng, theano_rng=theano_rng, input=x,
-            layers=[784, 20, 10, 20, 784])
+    # Define model
+    mlp = MLP(np_rng=rng, theano_rng=theano_rng, input=x,
+              layers=layers)
 
-    cost, updates = da.get_cost_updates(
-        corruption_level=0.,
+    return index, x, mlp
+
+
+def train(index, x, mlp, corruption_level=0., learning_rate=0.1,
+          dataset='mnist.pkl.gz', batch_size=20, training_epochs=10):
+    # get cost and updates
+    cost, updates = mlp.get_cost_updates(
+        corruption_level=corruption_level,
         learning_rate=learning_rate)
 
-    train_da = theano.function(
+    # Create training function
+    datasets = load_data(dataset)
+    train_set_x, train_set_y = datasets[0]
+    n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
+    train_func = theano.function(
         [index], cost, updates=updates,
         givens={
             x: train_set_x[index * batch_size: (index + 1) * batch_size]})
 
+    # Let's train :)
+    train_costs_per_epoch = []
+    train_costs_per_example = []
     start_time = timeit.default_timer()
-
-    ############
-    # TRAINING #
-    ############
     for epoch in xrange(training_epochs):
         # go through trainng set
         c = []
         for batch_index in xrange(n_train_batches):
-            c.append(train_da(batch_index))
+            c.append(train_func(batch_index))
 
+        train_costs_per_epoch.append(np.mean(c))
+        train_costs_per_example.extend(c)
         print 'Training epoch %d, cost ' % epoch, np.mean(c)
 
     end_time = timeit.default_timer()
-
     training_time = (end_time - start_time)
-
     print >> sys.stderr, ('The no corruption code for file ' +
                           os.path.split(__file__)[1] +
                           ' ran for %.2fm' % ((training_time) / 60.))
+
+    return train_costs_per_epoch, train_costs_per_example
+
+
+def plots(index, mlp, output_folder='plots', x=None):
+    # Create directory for files
+    if not os.path.isdir(output_folder):
+        os.makedirs(output_folder)
+    os.chdir(output_folder)
+
     image = Image.fromarray(
-        tile_raster_images(X=da.W.get_value(borrow=True).T,
+        tile_raster_images(X=mlp.weights[0].get_value(borrow=True).T,
                            img_shape=(28, 28), tile_shape=(10, 10),
                            tile_spacing=(1, 1)))
-    image.save('filters_corruption_0.png')
-
-    h = da.get_hidden_values(x)
-    z = da.get_reconstructed_input(h)
-    f = theano.function(
-        [index], z,
-        givens={
-            x: train_set_x[index * batch_size: (index + 1) * batch_size]})
-    image = Image.fromarray(
-        tile_raster_images(
-            X=np.vstack([f(0)[:10], train_set_x.get_value()[:10]]),
-            img_shape=(28, 28), tile_shape=(2, 10),
-            tile_spacing=(1, 1)))
-    image.save('reconstruction_corruption_0.png')
-
-    #####################################
-    # BUILDING THE MODEL CORRUPTION 30% #
-    #####################################
-
-    rng = np.random.RandomState(123)
-    theano_rng = RandomStreams(rng.randint(2 ** 30))
-
-    da = dA(
-        np_rng=rng,
-        theano_rng=theano_rng,
-        input=x,
-        n_visible=28 * 28,
-        n_hiddens=500
-    )
-
-    cost, updates = da.get_cost_updates(
-        corruption_level=0.3,
-        learning_rate=learning_rate
-    )
-
-    train_da = theano.function(
-        [index],
-        cost,
-        updates=updates,
-        givens={
-            x: train_set_x[index * batch_size: (index + 1) * batch_size]
-        }
-    )
-
-    start_time = timeit.default_timer()
-
-    ############
-    # TRAINING #
-    ############
-
-    # go through training epochs
-    for epoch in xrange(training_epochs):
-        # go through trainng set
-        c = []
-        for batch_index in xrange(n_train_batches):
-            c.append(train_da(batch_index))
-
-        print 'Training epoch %d, cost ' % epoch, np.mean(c)
-
-    end_time = timeit.default_timer()
-
-    training_time = (end_time - start_time)
-
-    print >> sys.stderr, ('The 30% corruption code for file ' +
-                          os.path.split(__file__)[1] +
-                          ' ran for %.2fm' % (training_time / 60.))
-
-    image = Image.fromarray(tile_raster_images(
-        X=da.W.get_value(borrow=True).T,
-        img_shape=(28, 28), tile_shape=(10, 10),
-        tile_spacing=(1, 1)))
-    image.save('filters_corruption_30.png')
-
-    os.chdir('../')
+    image.save(output_folder + '/' + 'filters_corruption_0.png')
 
 
 if __name__ == '__main__':
-    test_dA()
+    index, x, mlp = build_model()
+    train(index, x, mlp)
+    plots(index, mlp)
