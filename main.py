@@ -34,8 +34,10 @@ class MLP(object):
         for i in range(len(layers) - 1):
             weights.append(theano.shared(
                 value=np.asarray(np_rng.uniform(
-                    low=-4 * np.sqrt(6. / (layers[i] + layers[i + 1])),
-                    high=4 * np.sqrt(6. / (layers[i] + layers[i + 1])),
+                    # low=-4 * np.sqrt(6. / (layers[i] + layers[i + 1])),
+                    # high=4 * np.sqrt(6. / (layers[i] + layers[i + 1])),
+                    low=-0.2,
+                    high=0.2,
                     size=(layers[i], layers[i + 1])),
                     dtype=theano.config.floatX),
                 name='W_' + str(i) + '_to_' + str(i + 1),
@@ -107,7 +109,7 @@ def build_model(layers=[784, 500, 784]):
     return index, x, mlp
 
 
-def train(index, x, mlp, corruption_level=0., learning_rate=0.1,
+def train(index, x, mlp, corruption_level=0., learning_rate=0.05,
           dataset='mnist.pkl.gz', batch_size=100, epochs=15):
     # get cost and updates
     cost, updates = mlp.get_cost_updates(
@@ -171,20 +173,22 @@ def plots(index, mlp, output_folder='plots',
 
 def plot_layers(mlp, string='NA'):
     layer = T.matrix('layer')
-    outputs = np.zeros(((mlp.num_layers - 1) / 2, 784))
-    for i in np.arange((mlp.num_layers - 1) / 2, mlp.num_layers - 1):
+    layers_half = (mlp.num_layers - 1) / 2
+    outputs = np.zeros((30 * layers_half, 784))
+    for i in np.arange(layers_half, mlp.num_layers - 1):
         get_output_func = theano.function(
             [layer], mlp.get_output_from_layer(layer, i))
         # To have hot-vectors we use identity matrix
         hot_vectors = np.identity(mlp.layers[i])
         # for hot_vector in hot_vectors:
         for j in range(30):
-            outputs[i - (mlp.num_layers - 1) / 2, :] = get_output_func(
+            outputs[30 * (i - layers_half) + j, :] = get_output_func(
                 [hot_vectors[j].astype('float32')])
 
     image = Image.fromarray(
         tile_raster_images(X=outputs,
-                           img_shape=(28, 28), tile_shape=(10, 10),
+                           img_shape=(28, 28),
+                           tile_shape=(layers_half, 30),
                            tile_spacing=(1, 1)))
     image.save('/u/pezeshki/DAE_Experiments/plots/layers_epoch_' +
                string + '.png')
@@ -194,6 +198,5 @@ if __name__ == '__main__':
     index, x, mlp = build_model(
         layers=[784, 1000, 500, 250, 30, 250, 500, 1000, 784])
     train_costs_per_epoch, train_costs_per_example = train(
-        index, x, mlp, corruption_level=0.0, epochs=5)
+        index, x, mlp, corruption_level=0.4, epochs=100)
     plots(index=index, mlp=mlp, x=x, train_costs_per_epoch=train_costs_per_epoch)
-    import ipdb; ipdb.set_trace()
