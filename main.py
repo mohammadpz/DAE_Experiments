@@ -17,6 +17,10 @@ try:
 except ImportError:
     import Image
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 
 class MLP(object):
     def __init__(self, np_rng, theano_rng=None, input=None,
@@ -79,8 +83,10 @@ class MLP(object):
     def get_cost_updates(self, corruption_level, learning_rate):
         tilde_x = self.get_corrupted_input(self.x, corruption_level)
         z = self.get_output_from_layer(tilde_x, 0)
-        loss = - T.sum(self.x * T.log(z) + (1 - self.x) * T.log(1 - z), axis=1)
-        cost = T.mean(loss)
+        # loss = - T.sum(self.x * T.log(z) +
+        #                (1 - self.x) * T.log(1 - z), axis=1)
+        # cost = T.mean(loss)
+        cost = T.mean((self.x - z) ** 2)
         gparams = T.grad(cost, self.params)
         updates = [(param, param - learning_rate * gparam)
                    for param, gparam in zip(self.params, gparams)]
@@ -102,7 +108,7 @@ def build_model(layers=[784, 500, 784]):
 
 
 def train(index, x, mlp, corruption_level=0., learning_rate=0.1,
-          dataset='mnist.pkl.gz', batch_size=20, training_epochs=10):
+          dataset='mnist.pkl.gz', batch_size=100, epochs=15):
     # get cost and updates
     cost, updates = mlp.get_cost_updates(
         corruption_level=corruption_level,
@@ -121,7 +127,8 @@ def train(index, x, mlp, corruption_level=0., learning_rate=0.1,
     train_costs_per_epoch = []
     train_costs_per_example = []
     start_time = timeit.default_timer()
-    for epoch in xrange(training_epochs):
+    for epoch in xrange(epochs):
+        plot_layers(mlp, str(epoch))
         # go through trainng set
         c = []
         for batch_index in xrange(n_train_batches):
@@ -140,7 +147,8 @@ def train(index, x, mlp, corruption_level=0., learning_rate=0.1,
     return train_costs_per_epoch, train_costs_per_example
 
 
-def plots(index, mlp, output_folder='plots', x=None):
+def plots(index, mlp, output_folder='plots',
+          x=None, train_costs_per_epoch=None):
     # Create directory for files
     if not os.path.isdir(output_folder):
         os.makedirs(output_folder)
@@ -150,10 +158,42 @@ def plots(index, mlp, output_folder='plots', x=None):
         tile_raster_images(X=mlp.weights[0].get_value(borrow=True).T,
                            img_shape=(28, 28), tile_shape=(10, 10),
                            tile_spacing=(1, 1)))
-    image.save(output_folder + '/' + 'filters_corruption_0.png')
+    image.save('filters.png')
+
+    # Training curve
+    fig = plt.figure()
+    plt.plot(train_costs_per_epoch)
+    fig.savefig('temp.png')
+
+    # Nodes representation
+    plot_layers(mlp)
+
+
+def plot_layers(mlp, string='NA'):
+    layer = T.matrix('layer')
+    outputs = np.zeros(((mlp.num_layers - 1) / 2, 784))
+    for i in np.arange((mlp.num_layers - 1) / 2, mlp.num_layers - 1):
+        get_output_func = theano.function(
+            [layer], mlp.get_output_from_layer(layer, i))
+        # To have hot-vectors we use identity matrix
+        hot_vectors = np.identity(mlp.layers[i])
+        # for hot_vector in hot_vectors:
+        for j in range(30):
+            outputs[i - (mlp.num_layers - 1) / 2, :] = get_output_func(
+                [hot_vectors[j].astype('float32')])
+
+    image = Image.fromarray(
+        tile_raster_images(X=outputs,
+                           img_shape=(28, 28), tile_shape=(10, 10),
+                           tile_spacing=(1, 1)))
+    image.save('/u/pezeshki/DAE_Experiments/plots/layers_epoch_' +
+               string + '.png')
 
 
 if __name__ == '__main__':
-    index, x, mlp = build_model()
-    train(index, x, mlp)
-    plots(index, mlp)
+    index, x, mlp = build_model(
+        layers=[784, 1000, 500, 250, 30, 250, 500, 1000, 784])
+    train_costs_per_epoch, train_costs_per_example = train(
+        index, x, mlp, corruption_level=0.0, epochs=5)
+    plots(index=index, mlp=mlp, x=x, train_costs_per_epoch=train_costs_per_epoch)
+    import ipdb; ipdb.set_trace()
